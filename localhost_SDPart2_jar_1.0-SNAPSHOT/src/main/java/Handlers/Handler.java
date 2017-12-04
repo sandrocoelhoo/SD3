@@ -27,7 +27,7 @@ public class Handler implements Thrift.Iface {
 
     private static final ConcurrentHashMap<Integer, Vertice> HashVertice = new ConcurrentHashMap<Integer, Vertice>();
     private static Node node, nodeRaiz;
-    private static int numBits = 5;
+    private static int numBits = 7;
 
     public Handler(String args[]) throws TException {
         /* Ex. da sequência de argumentos:
