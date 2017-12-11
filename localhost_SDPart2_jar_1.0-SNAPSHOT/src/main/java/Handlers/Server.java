@@ -20,7 +20,7 @@ public class Server extends StateMachine {
     public static Handler handler;
     public static Grafo.Thrift.Processor processor;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
 
         int myId = Integer.parseInt(args[0]);
         List<Address> addresses = new LinkedList<>();
@@ -39,14 +39,21 @@ public class Server extends StateMachine {
                         .withStorageLevel(StorageLevel.DISK)
                         .build());
         new Thread();
-        
+
         CopycatServer copycatServer = builder.build();
 
-        if (myId == 0) {
-            copycatServer.bootstrap().join();
-        } else {
-            copycatServer.join(addresses).join();
-        }
+        Thread t = new Thread() {
+
+            @Override
+            public void run() {
+                if (myId == 0) {
+                    copycatServer.bootstrap().join();
+                } else {
+                    copycatServer.join(addresses).join();
+                }
+            }
+        };
+        t.start();
 
         try {
             handler = new Handler(args);
@@ -56,7 +63,17 @@ public class Server extends StateMachine {
 
             TServer server = new TThreadPoolServer(new TThreadPoolServer.Args(servertransport).processor(processor));
 
-            server.serve();
+            Thread t2 = new Thread() {
+                @Override
+                public void run() {
+                    server.serve();
+                }
+
+            };
+            t2.start();
+
+            t.join();
+            t2.join();
 
         } catch (TException x) {
             x.printStackTrace();
