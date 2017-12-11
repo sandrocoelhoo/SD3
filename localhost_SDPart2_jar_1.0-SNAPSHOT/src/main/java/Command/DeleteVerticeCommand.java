@@ -4,10 +4,10 @@ package Command;
 import Grafo.Vertice;
 import io.atomix.copycat.Command;
 
-public class AddVerticeCommand implements Command<Boolean> {
+public class DeleteVerticeCommand implements Command<Boolean> {
     public Vertice v;
 
-    public AddVerticeCommand(Vertice v) {
+    public DeleteVerticeCommand(Vertice v) {
         this.v = v;
     }
     
