@@ -1,10 +1,7 @@
 package Handlers;
 
 import java.io.File;
-import java.util.LinkedList;
-import java.util.List;
-import org.apache.thrift.TException;
-import org.apache.thrift.server.TServer;
+
 import org.apache.thrift.server.TThreadPoolServer;
 import org.apache.thrift.transport.TServerSocket;
 import org.apache.thrift.transport.TServerTransport;
@@ -14,6 +11,10 @@ import io.atomix.copycat.server.CopycatServer;
 import io.atomix.copycat.server.StateMachine;
 import io.atomix.copycat.server.storage.Storage;
 import io.atomix.copycat.server.storage.StorageLevel;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.concurrent.CompletableFuture;
+import org.apache.thrift.server.TThreadPoolServer.Args;
 
 public class Server extends StateMachine {
 
@@ -22,61 +23,67 @@ public class Server extends StateMachine {
 
     public static void main(String[] args) throws InterruptedException {
 
-        int myId = Integer.parseInt(args[0]);
-        List<Address> addresses = new LinkedList<>();
-
-        for (int i = 1; i < args.length; i += 2) {
-            Address address = new Address(args[i], Integer.parseInt(args[i + 1]));
-            addresses.add(address);
-        }
-
-        CopycatServer.Builder builder = CopycatServer.builder(addresses.get(myId)).withStateMachine(Server::new)
-                .withTransport(NettyTransport.builder()
-                        .withThreads(4)
-                        .build())
-                .withStorage(Storage.builder()
-                        .withDirectory(new File("logs_" + myId)) //Must be unique
-                        .withStorageLevel(StorageLevel.DISK)
-                        .build());
-        new Thread();
-
-        CopycatServer copycatServer = builder.build();
-
-        Thread t = new Thread() {
-
-            @Override
-            public void run() {
-                if (myId == 0) {
-                    copycatServer.bootstrap().join();
-                } else {
-                    copycatServer.join(addresses).join();
-                }
-            }
-        };
-        t.start();
+        String ipLocal = args[0],
+                ipRaiz = args[2],
+                ipRaft = args[4],
+                ipRaftRaiz = args[6];
+        int portaLocal = Integer.parseInt(args[1]),
+                portaRaft = Integer.parseInt(args[5]),
+                portaRaftRaiz = Integer.parseInt(args[7]);
 
         try {
             handler = new Handler(args);
             processor = new Grafo.Thrift.Processor(handler);
+            Thread servidor = null;
 
-            TServerTransport servertransport = new TServerSocket(Integer.parseInt(args[1]));
+            TServerTransport servertransport = new TServerSocket(portaLocal);
+            TThreadPoolServer server = new TThreadPoolServer(new Args(servertransport).processor(processor));
 
-            TServer server = new TThreadPoolServer(new TThreadPoolServer.Args(servertransport).processor(processor));
-
-            Thread t2 = new Thread() {
-                @Override
-                public void run() {
-                    server.serve();
-                }
-
+            Runnable simple = () -> {
+                simple(server);
             };
-            t2.start();
 
-            t.join();
-            t2.join();
+            System.out.println("Inicializando Servidor.....");
+            servidor = new Thread(simple);
+            servidor.start();
+            System.out.println("Thrift Server Started on: ");
+            Address address = new Address(ipRaft, portaRaft);
+            CopycatServer builderCopy = CopycatServer.builder(address)
+                    .withStateMachine(() -> {
+                        return handler;
+                    })
+                    .withTransport(NettyTransport.builder()
+                            .withThreads(4)
+                            .build())
+                    .withStorage(Storage.builder()
+                            .withDirectory(new File("logs"))
+                            .withStorageLevel(StorageLevel.DISK)
+                            .build())
+                    .build();
 
-        } catch (TException x) {
-            x.printStackTrace();
+            if ((ipLocal == null ? ipRaiz == null : ipLocal.equals(ipRaiz)) && portaRaft == portaRaftRaiz && ipLocal.equals(ipRaftRaiz)) {
+                System.out.println("Root node for Raft, starting cluster...");
+                CompletableFuture<CopycatServer> future = builderCopy.bootstrap();
+                future.join();
+                System.out.println("Raft Cluster Started!");
+            } else {                                                                                            //Nó Comum(Raft)
+                System.out.println("Common Raft Node, connecting to cluster...");
+                Collection<Address> clusterRaft = Collections.singleton(new Address(ipRaftRaiz, portaRaftRaiz));
+                builderCopy.join(clusterRaft).join();
+                System.out.println("Connected to Raft Cluster!");
+            }
+            handler.raftClientConnect();
+            System.out.println("Servidor Inicializado");
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void simple(TThreadPoolServer server) {
+        try {
+            server.serve();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 }
