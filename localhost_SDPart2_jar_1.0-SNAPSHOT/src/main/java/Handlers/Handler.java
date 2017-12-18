@@ -7,6 +7,7 @@ import Grafo.KeyNotFound;
 import Grafo.Node;
 import Grafo.Thrift;
 import Grafo.Vertice;
+import io.atomix.copycat.server.StateMachine;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -22,7 +23,7 @@ import org.apache.thrift.protocol.TProtocol;
 import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
 
-public class Handler implements Thrift.Iface {
+public class Handler extends StateMachine implements Thrift.Iface {
 
     private static final ConcurrentHashMap<Integer, Vertice> HashVertice = new ConcurrentHashMap<Integer, Vertice>();
     private static Node node, nodeRaiz;
@@ -849,6 +850,10 @@ public class Handler implements Thrift.Iface {
         }
 
         return resp;
+    }
+    
+    public void raftClientConnect(){
+        
     }
 
 }
