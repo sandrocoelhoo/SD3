@@ -138,7 +138,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
         }, 10, 10, TimeUnit.SECONDS);
         
         ScheduledFuture scheduledFutureServerStatus = scheduledExecutorService.scheduleWithFixedDelay(() -> {
-                printServerStatus();
+                printServer();
         }, 10, 10, TimeUnit.SECONDS);
         
         ScheduledFuture scheduledFutureStabilizeCluster = scheduledExecutorService.scheduleWithFixedDelay(() -> {
@@ -945,6 +945,30 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 }
             }
         }
+    }
+    
+    public void printServer(){
+                String out = "";
+        out+="------Server Status------\n";
+        out+="ID:"+node.getId()+"\n";
+        if(node.getPred() != null)
+            out+="Predecessor: "+node.getPred().getId()+"\n";
+        else
+            out+="Predecessor: NULL\n";
+        for(int i = 0; i < numBits; i++){
+            List<Finger> lAux = (List<Finger>) node.getFt().get(i);
+            out+="Finger ("+i+") |"+ (node.getId() + (long)Math.pow(2, i))% (long) Math.pow(2, numBits) +"| -> "+lAux.get(0).getId() + " @ { ";
+            for(Finger f : lAux){
+                out+=f.getIp()+":"+f.getPort()+", ";
+            }
+            out+="\b\b }\n";
+        }
+        out+="Cluster{ ";
+        for(Finger a : node.getCluster()){
+            out+="Porta:"+a.getPortaRaft()+", ";
+        }
+        out+="\b\b }\n";
+        System.out.println(out);
     }
     
 }
