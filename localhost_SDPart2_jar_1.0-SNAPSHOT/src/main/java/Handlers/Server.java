@@ -23,23 +23,13 @@ public class Server extends StateMachine {
 
     public static void main(String[] args) throws InterruptedException {
 
-        String ipLocal = "localhost";
-        int portaLocal = 5559;
-        String ipRaiz = "localhost";
-        int portaRaiz = 5559;
-        String ipRaftRaiz = "localhost";
-        int portaRaftRaiz = 5560;
-        int portaRaft = 5560;
-
-        if (args.length != 0) {
-            ipLocal = args[0];
-            portaLocal = Integer.parseInt(args[1]);
-            ipRaiz = args[2];
-            portaRaiz = Integer.parseInt(args[3]);
-            ipRaftRaiz = args[4];
-            portaRaftRaiz = Integer.parseInt(args[5]);
-            portaRaft = Integer.parseInt(args[6]);
-        }
+        String ipLocal = args[0];
+        int portaLocal = Integer.parseInt(args[1]);
+        String ipRaiz = args[2];
+        int portaRaiz = Integer.parseInt(args[3]);
+        String ipRaftRaiz = args[4];
+        int portaRaftRaiz = Integer.parseInt(args[5]);
+        int portaRaft = Integer.parseInt(args[6]);
 
         Thread servidor = null;
 
