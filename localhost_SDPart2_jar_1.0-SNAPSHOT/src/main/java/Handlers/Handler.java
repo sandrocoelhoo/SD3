@@ -1,5 +1,6 @@
 package Handlers;
 
+import Command.AddVerticeCommand;
 import Grafo.Aresta;
 import Grafo.Chord;
 import Grafo.Finger;
@@ -7,11 +8,18 @@ import Grafo.KeyNotFound;
 import Grafo.Node;
 import Grafo.Thrift;
 import Grafo.Vertice;
+import io.atomix.catalyst.transport.Address;
+import io.atomix.catalyst.transport.netty.NettyTransport;
+import io.atomix.copycat.client.CopycatClient;
+import io.atomix.copycat.server.Commit;
 import io.atomix.copycat.server.StateMachine;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -26,26 +34,43 @@ import org.apache.thrift.transport.TTransport;
 public class Handler extends StateMachine implements Thrift.Iface {
 
     private static final ConcurrentHashMap<Integer, Vertice> HashVertice = new ConcurrentHashMap<Integer, Vertice>();
-    private static Node node, nodeRaiz;
-    private static int numBits = 7;
+    private static Node node, nodeRaiz, aux;
+    private static final int numBits = 5;
+    private static final int clusterS = 3;
+    private static CopycatClient copyClient;
 
     public Handler(String args[]) throws TException {
         /* Ex. da sequência de argumentos:
-            IP Local | Porta Local | IP Raíz | Porta Raíz
-            1ª Vez: localhost 4000 localhost 4000 (IP/Porta Iguais para upar o nó raíz)
-            2ª+ Vez: localhost 4001 localhost 4000 (Nó que quer entrar tem que ter porta diferente)
+            IP Local | Porta Local | IP Raíz | Porta Raíz | IP Raiz Raft | Porta Raiz Raft (!=) | Porta Raft Local 
+            1ª Vez: localhost 4000 localhost 4000 localhost 4000 localhost 3000 3000(IP/Porta Iguais para upar o nó raíz)
+            2ª+ Vez: localhost 4001 localhost 4000 localhost 3000 3001 (Nó que quer entrar tem que ter porta diferente)
          */
 
+        String ipLocal = args[0];
         int port = Integer.parseInt(args[1]); //Porta do nó local (Que quer entrar no chord)
-        int nodeRaizPort = Integer.parseInt(args[3]); //Porta do nó nodeRaiz
+        String ipRaiz = args[2];
+        int portaRaiz = Integer.parseInt(args[3]); //Porta do nó nodeRaiz
+        String ipRaftRaiz = args[4];
+        int portaRaftRaiz = Integer.parseInt(args[5]);
+        int portaRaft = Integer.parseInt(args[6]);
+
+        copyClient = CopycatClient.builder()
+                .withTransport(NettyTransport.builder()
+                        .withThreads(4)
+                        .build())
+                .build();
 
         node = new Node();
         node.setFt(new ArrayList<Finger>());
         node.setIp(args[0]); // IP Local
         node.setPort(port); // Porta Local
+        node.setIpRaftRaiz(ipRaftRaiz);
+        node.setPortaRaftRaiz(portaRaftRaiz);
+        node.setPortaRaft(portaRaft);
+        node.setCluster(new ArrayList<>());
 
         // Se o IP/Porta "Raiz" for igual ao IP e porta Local estabelece o nó raíz
-        if (args[2].equals(node.getIp()) && (port == nodeRaizPort)) {
+        if (ipRaiz.equals(node.getIp()) && (port == portaRaiz)) {
             randomID(node);
             join(node);
             System.out.println("# Nó RAIZ estabelecido: \n"
@@ -58,18 +83,30 @@ public class Handler extends StateMachine implements Thrift.Iface {
             ao setar seu ID primeiro deve verificar que não existe nenhum nó pertencente ao 
             chord com o mesmo ID, por meio da função VerifyID.
              */
-            TTransport transport = new TSocket(args[2], nodeRaizPort);
+            TTransport transport = new TSocket(ipRaiz, portaRaiz);
             transport.open();
             TProtocol protocol = new TBinaryProtocol(transport);
             Chord.Client client = new Chord.Client(protocol);
             nodeRaiz = client.sendSelf();
             transport.close();
-            node.setId(verifyID(nodeRaiz));
-            join(nodeRaiz);
-            System.out.println("# Nó local estabelecido no Chord: \n"
-                    + "*ID: " + node.getId()
-                    + "\n*IP: " + node.getIp()
-                    + "\n*Port: " + node.getPort() + "\n");
+
+            if (portaRaft == portaRaftRaiz && node.getIp().equals(node.getIpRaftRaiz())) {
+                node.setId(verifyID(nodeRaiz));
+                join(nodeRaiz);
+                System.out.println("# Nó raiz RAFT estabelecido: \n"
+                        + "*ID: " + node.getId()
+                        + "\n*IP: " + node.getIp()
+                        + "\n*Port: " + node.getPort() + "\n");
+            }else{
+                node.setId(nodeRaiz.getId());
+                join(nodeRaiz);
+                System.out.println("# Nó RAFT estabelecido: \n"
+                        + "*ID: " + node.getId()
+                        + "\n*IP: " + node.getIp()
+                        + "\n*Port: " + node.getPort() + "\n");
+                
+            }
+
         }
 
         /* Variável de thread usada nas funções fixFingers e Stabilize
@@ -99,23 +136,30 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 ex.printStackTrace();
             }
         }, 10, 10, TimeUnit.SECONDS);
+        
+        ScheduledFuture scheduledFutureServerStatus = scheduledExecutorService.scheduleWithFixedDelay(() -> {
+                printServerStatus();
+        }, 10, 10, TimeUnit.SECONDS);
+        
+        ScheduledFuture scheduledFutureStabilizeCluster = scheduledExecutorService.scheduleWithFixedDelay(() -> {
+            try {
+                stabilizeCluster();
+            } catch (TException e) {
+                System.out.println("Falha ao rodar estabilização de cluster");
+            }
+        }, 10, 10, TimeUnit.SECONDS);
     }
 
     @Override
     public boolean addVertice(Vertice v) throws TException {
         // Nó que define onde será colocado o vértice a partir do resto da operação
-        Node aux = getSucessor(v.getNome() % (int) Math.pow(2, numBits));
+        getNodeAux(v);
 
         // Se o nó ID do nó local for o mesmo ID do vértice auxiliar então já insere, senão 
         // abre uma nova conexão com o nó onde deve ser inserido o vértice e envia pra os dados pra ele. 
         if (node.getId() == aux.getId()) {
 
-            if (Handler.HashVertice.putIfAbsent(v.nome, v) == null) {
-                v.setIdNode(aux.getId());
-                return true;
-            } else {
-                return false;
-            }
+            return copyClient.submit(new AddVerticeCommand(v)).join();
 
         } else {
             TTransport transport = new TSocket(aux.getIp(), aux.getPort());
@@ -131,6 +175,22 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 transport.close();
                 return false;
             }
+        }
+    }
+    
+    public boolean addVertice(Commit<AddVerticeCommand> commit){
+        
+        try{
+            Vertice v = commit.operation().v;
+            
+            if (Handler.HashVertice.putIfAbsent(v.nome, v) == null) {
+                v.setIdNode(aux.getId());
+                return true;
+            } else {
+                return false;
+            }
+        } finally {
+            commit.close();
         }
     }
 
@@ -337,7 +397,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
         if (aresta != null) {
             return aresta;
         }
-        
+
         throw new KeyNotFound();
 
     }
@@ -742,11 +802,6 @@ public class Handler extends StateMachine implements Thrift.Iface {
         }
     }
 
-    @Override
-    public int getIDLocal() throws TException {
-        return node.getId();
-    }
-
     public static boolean interval(int x, int a, boolean flagOpenA, int b, boolean flagOpenB) {
         //Verifica se x está no intervalo de valores "a" e "b".
         //As flags informam se o intervalo é aberto ou não. 
@@ -817,9 +872,8 @@ public class Handler extends StateMachine implements Thrift.Iface {
             cont--;
 
             List<Vertice> list = readVerticeNeighboors(v);
-            
-            
-            if (list == null){
+
+            if (list == null) {
                 return null;
             }
 
@@ -851,9 +905,46 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
         return resp;
     }
+
+    public void raftClientConnect() {
+        Collection<Address> cluster = Arrays.asList(new Address(node.getIp(),node.getPortaRaft()));
+        CompletableFuture<CopycatClient> cf = copyClient.connect(cluster);
+        cf.join();
+    }
     
-    public void raftClientConnect(){
-        
+    public void getNodeAux(Vertice v) throws TException{
+        aux = getSucessor(v.getNome() % (int) Math.pow(2, numBits)); // Pega o sucessor do nó local
+    }
+    
+    @Override
+    public int getIDLocal() throws TException {
+        return node.getId();
+    }
+    
+    public void setCluster(List<Finger> cluster){
+        node.setCluster(cluster);
     }
 
+    @Override
+    public List<Finger> sendSelfCluster() throws KeyNotFound, TException {
+        return node.getCluster();
+    }
+
+    @Override
+    public void stabilizeCluster() throws KeyNotFound, TException {
+        if (node.getPortaRaft() == node.getPortaRaftRaiz() && node.getIp().equals(node.getIpRaftRaiz())){
+            for (int i = 1; i < clusterS; i++){
+                if (!(node.getCluster().get(i).getIp().equals(node.getIp()) && node.getCluster().get(i).getPortaRaft() == node.getPortaRaft())){
+                    TTransport transport = new TSocket(node.getCluster().get(i).getIp(),node.getCluster().get(i).getPort());
+                    transport.open();
+                    TProtocol protocol = new TBinaryProtocol(transport);
+                    Thrift.Client client = new Thrift.Client(protocol);
+                    client.setCluster(node.getCluster());
+                    transport.close();
+                    
+                }
+            }
+        }
+    }
+    
 }

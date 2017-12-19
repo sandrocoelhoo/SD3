@@ -10,6 +10,5 @@ public class AddVerticeCommand implements Command<Boolean> {
     public AddVerticeCommand(Vertice v) {
         this.v = v;
     }
-    
-    
+
 }
