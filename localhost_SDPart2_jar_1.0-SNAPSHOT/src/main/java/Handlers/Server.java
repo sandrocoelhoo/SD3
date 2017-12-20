@@ -63,8 +63,8 @@ public class Server extends StateMachine {
                             .build())
                     .build();
 
-            System.out.println("Endereço Thrift: " + ipLocal + ":" + portaRaiz);
-            System.out.println("Endereço Copycat: " + ipLocal + ":" + portaRaft);
+            System.out.println("Endereço Thrift--> " + ipLocal + ":" + portaRaiz);
+            System.out.println("Endereço Copycat-> " + ipLocal + ":" + portaRaft);
 
             if ((ipLocal == null ? ipRaiz == null : ipLocal.equals(ipRaiz)) && portaRaft == portaRaftRaiz && ipLocal.equals(ipRaftRaiz)) {
                 CompletableFuture<CopycatServer> future = builderCopy.bootstrap();

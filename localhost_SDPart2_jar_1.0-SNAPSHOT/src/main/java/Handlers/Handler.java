@@ -35,7 +35,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
     private static final ConcurrentHashMap<Integer, Vertice> HashVertice = new ConcurrentHashMap<Integer, Vertice>();
     private static Node node, nodeRaiz, aux;
-    private static final int numBits = 5;
+    private static final int numBits = 9;
     private static final int clusterS = 3;
     private static CopycatClient copyClient;
 
@@ -61,8 +61,8 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 .build();
 
         node = new Node();
-        node.setFt(new ArrayList<Finger>());
-        node.setIp(args[0]); // IP Local
+        node.setFt(new ArrayList<>());
+        node.setIp(ipLocal); // IP Local
         node.setPort(port); // Porta Local
         node.setIpRaftRaiz(ipRaftRaiz);
         node.setPortaRaftRaiz(portaRaftRaiz);
@@ -73,10 +73,12 @@ public class Handler extends StateMachine implements Thrift.Iface {
         if (ipRaiz.equals(node.getIp()) && (port == portaRaiz)) {
             randomID(node);
             join(node);
-            System.out.println("# Nó RAIZ estabelecido: \n"
+            System.out.println("\n --- Nó RAIZ estabelecido --- \n"
                     + "*ID: " + node.getId()
-                    + "\n*IP: " + node.getIp()
-                    + "\n*Port: " + node.getPort() + "\n");
+                    + "\n*IP Local: " + node.getIp()
+                    + "\n*Porta Local: " + node.getPort()
+                    + "\n*Raft Local: " + node.getPortaRaft()
+                    + "\n*Raft Raiz: " + node.getPortaRaftRaiz() + "\n");
         } else {
             /* Quer dizer que já existe um nó no chord então irá iniciar uma comunicação com
             o nó raíz e vai atribuir esse nó raíz à variável nodeRaiz. Então o nó local, 
@@ -93,18 +95,22 @@ public class Handler extends StateMachine implements Thrift.Iface {
             if (portaRaft == portaRaftRaiz && node.getIp().equals(node.getIpRaftRaiz())) {
                 node.setId(verifyID(nodeRaiz));
                 join(nodeRaiz);
-                System.out.println("# Nó raiz RAFT estabelecido: \n"
+                System.out.println("\n --- Nó Raft RAIZ estabelecido --- \n"
                         + "*ID: " + node.getId()
-                        + "\n*IP: " + node.getIp()
-                        + "\n*Port: " + node.getPort() + "\n");
-            }else{
-                node.setId(nodeRaiz.getId());
+                        + "\n*IP Local: " + node.getIp()
+                        + "\n*Porta Local: " + node.getPort()
+                        + "\n*Raft Local: " + node.getPortaRaft()
+                        + "\n*Raft Raiz: " + node.getPortaRaftRaiz() + "\n");
+            } else {
+                node.setId(verifyID(nodeRaiz));
                 join(nodeRaiz);
-                System.out.println("# Nó RAFT estabelecido: \n"
+                System.out.println("\n --- Nó Comum Raft estabelecido --- \n"
                         + "*ID: " + node.getId()
-                        + "\n*IP: " + node.getIp()
-                        + "\n*Port: " + node.getPort() + "\n");
-                
+                        + "\n*IP Local: " + node.getIp()
+                        + "\n*Porta Local: " + node.getPort()
+                        + "\n*Raft Local: " + node.getPortaRaft()
+                        + "\n*Raft Raiz: " + node.getPortaRaftRaiz() + "\n");
+
             }
 
         }
@@ -115,11 +121,10 @@ public class Handler extends StateMachine implements Thrift.Iface {
         O scheduleWithFixedDelay permite que as threads sejam reexecutadas após o tempo demarcado,
         porém, existe também um tempo de delay até que a próxima thread inicie após o fim da primeira. 
          */
-        ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(numBits);
+        ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(6);
 
         ScheduledFuture scheduledFutureStabilize = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
-                System.out.println("\n-> Executando estabilização do Chord...");
                 stabilize();
             } catch (TException ex) {
                 System.out.println("\n-> Erro ao iniciar Thread de estabilização do Chord.");
@@ -129,23 +134,23 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
         ScheduledFuture scheduledFutureFixFingers = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
-                System.out.println("\n-> Executando atualização das FT's...");
                 fixFingers();
             } catch (TException ex) {
                 System.out.println("\n-> Erro ao iniciar Thread para atualizar as Finger Tables");
                 ex.printStackTrace();
             }
         }, 10, 10, TimeUnit.SECONDS);
-        
+
         ScheduledFuture scheduledFutureServerStatus = scheduledExecutorService.scheduleWithFixedDelay(() -> {
-                printServer();
+            printServer();
         }, 10, 10, TimeUnit.SECONDS);
-        
+
         ScheduledFuture scheduledFutureStabilizeCluster = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             try {
+                System.out.println("Executando atualização dos clusters...");
                 stabilizeCluster();
             } catch (TException e) {
-                System.out.println("Falha ao rodar estabilização de cluster");
+                System.out.println("Falha ao estabilizar os clusters");
             }
         }, 10, 10, TimeUnit.SECONDS);
     }
@@ -177,12 +182,12 @@ public class Handler extends StateMachine implements Thrift.Iface {
             }
         }
     }
-    
-    public boolean addVertice(Commit<AddVerticeCommand> commit){
-        
-        try{
+
+    public boolean addVertice(Commit<AddVerticeCommand> commit) {
+
+        try {
             Vertice v = commit.operation().v;
-            
+
             if (Handler.HashVertice.putIfAbsent(v.nome, v) == null) {
                 v.setIdNode(aux.getId());
                 return true;
@@ -529,20 +534,62 @@ public class Handler extends StateMachine implements Thrift.Iface {
         node.setPred(null);
 
         // Criação da FINGER TABLE e atribuição do mesmo nó para todos os campos
-        for (int i = 1; i <= numBits; i++) {
-            Finger aux = new Finger();
-            aux.setId(node.getId());
-            aux.setIp(node.getIp());
-            aux.setPort(node.getPort());
-            node.getFt().add(aux);
+        for (int i = 1; i < clusterS; i++) {
+            Finger auxF = new Finger();
+            auxF.setId(node.getId());
+            auxF.setIp(node.getIp());
+            auxF.setPort(node.getPort());
+            auxF.setPortaRaft(node.getPortaRaft());
+            node.getCluster().add(auxF);
         }
+
+        for (int i = 0; i < numBits; i++) {
+            node.getFt().add(new ArrayList<>());
+            for (int j = 0; j < clusterS; j++) {
+                Finger auxF = new Finger();
+                auxF.setId(node.getId());
+                auxF.setIp(node.getIp());
+                auxF.setPort(node.getPort());
+                auxF.setPortaRaft(node.getPortaRaft());
+                node.getFt().get(i).add(auxF);
+            }
+        }
+
 
         /* Se o nó for o nó raiz, não faz nada. 
             Caso seja outro nó que deseja entrar no chord, então ele pede para o nó raiz
         qual é os dados que ele possui de sucessor e predecessor e então atualiza seus 
         campos da ft.
          */
-        if (node.getId() != raiz.getId()) {
+        if (node.getId() != raiz.getId() && node.getPortaRaft() != raiz.getPortaRaft()) {
+            Finger auxF = new Finger();
+            auxF.setId(node.getId());
+            auxF.setIp(node.getIp());
+            auxF.setPort(node.getPort());
+            auxF.setPortaRaft(node.getPortaRaft());
+
+            TTransport transport = new TSocket(raiz.getIp(), raiz.getPort());
+            transport.open();
+            TProtocol protocol = new TBinaryProtocol(transport);
+            Thrift.Client client = new Thrift.Client(protocol);
+            List<Finger> cluster = client.sendSelfCluster();
+
+            for (int i = 1; i < clusterS; i++) {
+                if (cluster.get(i).equals(raiz.getIp()) && cluster.get(i).getPort() == raiz.getPort()) {
+                    Finger f = cluster.get(i);
+                    f.setId(node.getId());
+                    f.setIp(node.getIp());
+                    f.setPort(node.getPort());
+                    f.setPortaRaft(node.getPortaRaft());
+                    node.setCluster(cluster);
+                    transport.close();
+                    break;
+                }
+            }
+        }
+
+//Node nodeAux = client.getSucessor(node.getId());
+        if (node.getId() != raiz.getId() || (node.getPortaRaft() != node.getPortaRaftRaiz() && node.getIp().equals(node.getIdRaftRaiz()))) {
             TTransport transport = new TSocket(raiz.getIp(), raiz.getPort());
             transport.open();
             TProtocol protocol = new TBinaryProtocol(transport);
@@ -550,11 +597,11 @@ public class Handler extends StateMachine implements Thrift.Iface {
             Node nodeAux = client.getSucessor(node.getId());
             transport.close();
 
-            // Atualiza o primeiro valor da tabela FT do nó local com os dados do nó sucessor 
-            synchronized (node.getFt().get(0)) {
-                node.getFt().get(0).setId(nodeAux.getId());
-                node.getFt().get(0).setIp(nodeAux.getIp());
-                node.getFt().get(0).setPort(nodeAux.getPort());
+            for (int i = 0; i < clusterS; i++) {
+                node.getFt().get(0).get(i).setId(nodeAux.getCluster().get(i).getId());
+                node.getFt().get(0).get(i).setIp(nodeAux.getCluster().get(i).getIp());
+                node.getFt().get(0).get(i).setPort(nodeAux.getCluster().get(i).getPort());
+                node.getFt().get(0).get(i).setPortaRaft(nodeAux.getCluster().get(i).getPortaRaft());
             }
         }
     }
@@ -562,29 +609,35 @@ public class Handler extends StateMachine implements Thrift.Iface {
     @Override
     public Node getSucessor(int id) throws TException {
         // Para encontrar o sucessor, primeiro ele deve procurar pelo predecessor. 
-        Node aux = getPredecessor(id);
+        aux = getPredecessor(id);
 
-        if (aux.getFt().get(0).getId() == node.getId()) {
-            System.out.println("# Sucessor " + node.getId() + ", encontrado para ID:" + id);
+        if (aux.getFt().get(0).get(0).getId() == node.getId()) {
+            //System.out.println("# Sucessor " + node.getId() + ", encontrado para ID:" + id);
             return node;
         } else {
-            TTransport transport = new TSocket(aux.getFt().get(0).getIp(), aux.getFt().get(0).getPort());
-            transport.open();
-            TProtocol protocol = new TBinaryProtocol(transport);
-            Chord.Client client = new Chord.Client(protocol);
+            for (int i = 0; i < clusterS; i++) {
+                try {
 
-            System.out.println(aux.getId());
-            System.out.println(aux.getFt().get(0).getId());
-            aux = client.sendSelf();
-            transport.close();
-            System.out.println("Else = Sucessor ID: " + aux.getId() + " encontrado para ID:" + id);
-            return aux;
+                    TTransport transport = new TSocket(aux.getFt().get(0).get(i).getIp(), aux.getFt().get(0).get(i).getPort());
+                    transport.open();
+                    TProtocol protocol = new TBinaryProtocol(transport);
+                    Chord.Client client = new Chord.Client(protocol);
+                    aux = client.sendSelf();
+                    transport.close();
+                    //System.out.println("Else = Sucessor ID: " + aux.getId() + " encontrado para ID:" + id);
+                    return aux;
+                } catch (TException e) {
+
+                }
+            }
+            System.out.println("Problema com servidor no Cluster" + aux.getId());
+            throw new TException();
         }
     }
 
     @Override
     public Node getPredecessor(int id) throws TException {
-        System.out.println("\n-> Procurando predecessor para ID: " + id);
+        //System.out.println("\n-> Procurando predecessor para ID: " + id);
 
         // Aux recebe o nó local
         Node aux = node;
@@ -594,7 +647,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
         predecessor mais próximo, pois há casos em em que mesmo encontrando o predecessor
         não é o predecessor que deve ser usado.
          */
-        while (!interval(id, aux.getId(), true, aux.getFt().get(0).getId(), false)) {
+        while (!interval(id, aux.getId(), true, aux.getFt().get(0).get(0).getId(), false)) {
             if (aux != node) {
                 TTransport transport = new TSocket(aux.getIp(), aux.getPort());
                 transport.open();
@@ -606,7 +659,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 aux = closestPrecedingFinger(id);
             }
         }
-        System.out.println("-> Predecessor " + node.getId() + ", encontrado para ID:" + id);
+        //System.out.println("-> Predecessor " + node.getId() + ", encontrado para ID:" + id);
         return aux;
     }
 
@@ -614,23 +667,32 @@ public class Handler extends StateMachine implements Thrift.Iface {
     public Node closestPrecedingFinger(int id) throws TException {
 
         for (int i = numBits - 1; i >= 0; i--) {
-            System.out.println("Procurando Finger Predecessor mais próximo para ID: "
-                    + id + " na tabela de ID:" + node.getId() + " Entrada(" + i + ")->"
-                    + node.getFt().get(i).getId());
+            //System.out.println("Procurando Finger Predecessor mais próximo para ID: "
+            //+ id + " na tabela de ID:" + node.getId() + " Entrada(" + i + ")->"
+            //+ node.getFt().get(i).getId());
 
-            if (interval(node.getFt().get(i).getId(), node.getId(), true, id, true)) {
-                if (node.getId() != node.getFt().get(i).getId()) {
-                    Finger finger = node.getFt().get(i);
-                    TTransport transport = new TSocket(finger.getIp(), finger.getPort());
-                    transport.open();
-                    TProtocol protocol = new TBinaryProtocol(transport);
-                    Chord.Client client = new Chord.Client(protocol);
-                    Node aux = client.sendSelf();
-                    transport.close();
-                    return aux;
-                } else {
-                    return node;
+            if (interval(node.getFt().get(i).get(0).getId(), node.getId(), true, id, true)) {
+                for (int j = 0; j < clusterS; j++) {
+                    if (node.getId() != node.getFt().get(i).get(j).getId()) {
+                        try {
+
+                            Finger finger = node.getFt().get(i).get(j);
+                            TTransport transport = new TSocket(finger.getIp(), finger.getPort());
+                            transport.open();
+                            TProtocol protocol = new TBinaryProtocol(transport);
+                            Chord.Client client = new Chord.Client(protocol);
+                            Node aux = client.sendSelf();
+                            transport.close();
+                            return aux;
+                        } catch (TException e) {
+                            continue;
+                        }
+                    } else {
+                        return node;
+                    }
                 }
+                System.out.println("Problema no cluster " + node.getFt().get(i).get(0).getId());
+                throw new TException();
             }
         }
         return node;
@@ -651,42 +713,77 @@ public class Handler extends StateMachine implements Thrift.Iface {
         TTransport transport = null;
         TProtocol protocol = null;
         Chord.Client client = null;
-        fingerAux = node.getFt().get(0); // Pega o primeiro campo da FT do nó local [sucessor]
+        //fingerAux = node.getFt().get(0);  Pega o primeiro campo da FT do nó local [sucessor]
 
-        if (fingerAux.getId() != node.getId()) {
-            transport = new TSocket(fingerAux.getIp(), fingerAux.getPort());
-            transport.open();
-            protocol = new TBinaryProtocol(transport);
-            client = new Chord.Client(protocol);
-            nodeAux = client.sendSelf(); // Envia os dados do sucessor para o nó auxiliar
-            transport.close();
-        } else {
-            nodeAux = node; // Acontece caso o sucessor do nó for o próprio nó.
+        for (int i = 0; i < clusterS; i++) {
+            fingerAux = node.getFt().get(0).get(i);
+
+            if (fingerAux.getId() != node.getId()) {
+                try {
+
+                    transport = new TSocket(fingerAux.getIp(), fingerAux.getPort());
+                    transport.open();
+                    protocol = new TBinaryProtocol(transport);
+                    client = new Chord.Client(protocol);
+                    nodeAux = client.sendSelf(); // Envia os dados do sucessor para o nó auxiliar
+                    transport.close();
+                    break;
+                } catch (TException e) {
+                }
+            } else {
+                nodeAux = node; // Acontece caso o sucessor do nó for o próprio nó.
+                break;
+            }
         }
 
         fingerAux = nodeAux.getPred(); // Recebe o finger do predecessor [IP/port/id] 
 
-        if (fingerAux != null && interval(fingerAux.getId(), node.getId(), true, node.getFt().get(0).getId(), true)) {
-            Finger aux = new Finger();
-            aux.setId(fingerAux.getId());
-            aux.setIp(fingerAux.getIp());
-            aux.setPort(fingerAux.getPort());
-            printTable();
-            // Altera o sucessor na FT. 
-            node.getFt().set(0, aux);
-            printTable(); // Imprime a FT do nó
-        }
+        if (fingerAux != null && interval(fingerAux.getId(), node.getId(), true, node.getFt().get(0).get(0).getId(), true)) {
 
-        if (node.getFt().get(0).getId() != node.getId()) {
-            transport = new TSocket(node.getFt().get(0).getIp(), node.getFt().get(0).getPort());
+            List<Finger> cluster = null;
+            transport = new TSocket(fingerAux.getIp(), fingerAux.getPort());
             transport.open();
             protocol = new TBinaryProtocol(transport);
             client = new Chord.Client(protocol);
-            client.notify(node);
+            cluster = client.sendSelfCluster();
             transport.close();
+
+            for (int i = 0; i < clusterS; i++) {
+                node.getFt().get(0).set(i, cluster.get(i));
+            }
         }
-        System.out.println("-> Estabilização do chord concluída.");
-        printTable();
+
+        transport = new TSocket(node.getFt().get(0).get(0).getIp(), node.getFt().get(0).get(0).getPort());
+        transport.open();
+        protocol = new TBinaryProtocol(transport);
+        client = new Chord.Client(protocol);
+        List<Finger> newCluster = client.sendSelfCluster();
+        transport.close();
+        
+        for (int i = 0; i < clusterS; i++) {
+            if(!(node.getFt().get(0).get(i).getIp().equals(newCluster.get(i).getIp())) || (node.getFt().get(0).get(i).getPort() != newCluster.get(i).getPort() && 
+                    node.getFt().get(0).get(i).getIp().equals(newCluster.get(i).getIp()))  ){
+                node.getFt().get(0).set(i, newCluster.get(i));
+            }
+        }
+        
+        if(node.getFt().get(0).get(0).getId() == node.getId()){
+            for(int i = 0; i < clusterS; i++){
+                node.getFt().get(0).set(i, node.getCluster().get(i));
+            }
+        }
+        
+        if(node.getFt().get(0).get(0).getId() != node.getId()){
+            for(int i = 0; i < clusterS;i++){
+                transport = new TSocket(node.getFt().get(0).get(i).getIp(),node.getFt().get(0).get(i).getPort());
+                transport.open();
+                protocol = new TBinaryProtocol(transport);
+                client = new Chord.Client(protocol);
+                client.notify(node);
+                transport.close();
+            }
+        }
+        System.out.println("Estabilização concluída.");
     }
 
     @Override
@@ -700,8 +797,9 @@ public class Handler extends StateMachine implements Thrift.Iface {
             aux.setId(n.getId());
             aux.setIp(n.getIp());
             aux.setPort(n.getPort());
+            aux.setPortaRaft(n.getPortaRaft());
             node.setPred(aux);
-            System.out.println("\n-> O predecessor de:" + node.getId() + " agora é: " + n.getId());
+            // System.out.println("\n-> O predecessor de:" + node.getId() + " agora é: " + n.getId());
         } else {
             System.out.println("\n-> Não houveram alterações de predecessor");
         }
@@ -711,22 +809,22 @@ public class Handler extends StateMachine implements Thrift.Iface {
     public void fixFingers() throws TException {
         // Atualiza a finger table do nó local exceto o sucessor
 
-        System.out.println("\n-> Corrigindo a Finger Table dos nós...");
-
-        System.out.println("\n ######## Tabela Atual #######");
-        printTable();
-
+        //System.out.println("\n-> Corrigindo a Finger Table dos nós...");
+        //System.out.println("\n ######## Tabela Atual #######");
+        //printTable();
         for (int i = 1; i < numBits; i++) {
             Node aux = getSucessor((node.getId() + (int) Math.pow(2, i)) % (int) Math.pow(2, numBits));
-            Finger finger = new Finger();
-            finger.setId(aux.getId());
-            finger.setIp(aux.getIp());
-            finger.setPort(aux.getPort());
-            node.getFt().set(i, finger);
+            
+            List<Finger> cluster = new ArrayList<>();
+            cluster.addAll(aux.getCluster());
+            
+            for(int j = 0; j < clusterS; j++){
+                node.getFt().get(i).set(j, cluster.get(j));
+            }
         }
 
-        System.out.println("\n ######## Tabela Após correção #######");
-        printTable();
+        //System.out.println("\n ######## Tabela Atualizada #######");
+        //printTable();
     }
 
     @Override
@@ -793,7 +891,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
     public void printTable() {
         for (int i = 0; i < numBits; i++) {
 
-            Finger aux = node.getFt().get(i);
+            //Finger aux = node.getFt().get(i);
 
             System.out.println("(" + i + ") |" + (node.getId() + (int) Math.pow(2, i)) % (int) Math.pow(2, numBits)
                     + "| -------> ID:" + aux.getId()
@@ -907,21 +1005,21 @@ public class Handler extends StateMachine implements Thrift.Iface {
     }
 
     public void raftClientConnect() {
-        Collection<Address> cluster = Arrays.asList(new Address(node.getIp(),node.getPortaRaft()));
+        Collection<Address> cluster = Arrays.asList(new Address(node.getIp(), node.getPortaRaft()));
         CompletableFuture<CopycatClient> cf = copyClient.connect(cluster);
         cf.join();
     }
-    
-    public void getNodeAux(Vertice v) throws TException{
+
+    public void getNodeAux(Vertice v) throws TException {
         aux = getSucessor(v.getNome() % (int) Math.pow(2, numBits)); // Pega o sucessor do nó local
     }
-    
+
     @Override
     public int getIDLocal() throws TException {
         return node.getId();
     }
-    
-    public void setCluster(List<Finger> cluster){
+
+    public void setCluster(List<Finger> cluster) {
         node.setCluster(cluster);
     }
 
@@ -932,43 +1030,52 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
     @Override
     public void stabilizeCluster() throws KeyNotFound, TException {
-        if (node.getPortaRaft() == node.getPortaRaftRaiz() && node.getIp().equals(node.getIpRaftRaiz())){
-            for (int i = 1; i < clusterS; i++){
-                if (!(node.getCluster().get(i).getIp().equals(node.getIp()) && node.getCluster().get(i).getPortaRaft() == node.getPortaRaft())){
-                    TTransport transport = new TSocket(node.getCluster().get(i).getIp(),node.getCluster().get(i).getPort());
+        if (node.getPortaRaft() == node.getPortaRaftRaiz() && node.getIp().equals(node.getIpRaftRaiz())) {
+            for (int i = 1; i < clusterS; i++) {
+                if (!(node.getCluster().get(i).getIp().equals(node.getIp()) && node.getCluster().get(i).getPortaRaft() == node.getPortaRaft())) {
+                    TTransport transport = new TSocket(node.getCluster().get(i).getIp(), node.getCluster().get(i).getPort());
                     transport.open();
                     TProtocol protocol = new TBinaryProtocol(transport);
                     Thrift.Client client = new Thrift.Client(protocol);
                     client.setCluster(node.getCluster());
                     transport.close();
-                    
+
                 }
             }
         }
     }
-    
-    public void printServer(){
-                String out = "";
-        out+="------Server Status------\n";
-        out+="ID:"+node.getId()+"\n";
-        if(node.getPred() != null)
-            out+="Predecessor: "+node.getPred().getId()+"\n";
-        else
-            out+="Predecessor: NULL\n";
-        for(int i = 0; i < numBits; i++){
-            List<Finger> lAux = (List<Finger>) node.getFt().get(i);
-            out+="Finger ("+i+") |"+ (node.getId() + (long)Math.pow(2, i))% (long) Math.pow(2, numBits) +"| -> "+lAux.get(0).getId() + " @ { ";
-            for(Finger f : lAux){
-                out+=f.getIp()+":"+f.getPort()+", ";
+
+    public void printServer() {
+
+        String out = "";
+        out += "------Server Status------\n";
+        out += "ID:" + node.getId() + "\n";
+
+        if (node.getPred() != null) {
+            out += "Predecessor: " + node.getPred().getId() + "\n";
+        } else {
+            out += "Predecessor: NULL\n";
+        }
+
+        for (int i = 0; i < numBits; i++) {
+            List<Finger> auxList = node.getFt().get(i);
+            out += "Finger (" + i + ") |" + (node.getId() + (long) Math.pow(2, i)) % (long) Math.pow(2, numBits) + "| -> " + auxList.get(0).getId() + " @ { ";
+            for (Finger f : auxList) {
+                out += f.getIp() + ":" + f.getPort() + ", ";
             }
-            out+="\b\b }\n";
+            out += "\b\b }\n";
         }
-        out+="Cluster{ ";
-        for(Finger a : node.getCluster()){
-            out+="Porta:"+a.getPortaRaft()+", ";
+
+        out += "Cluster{ ";
+
+        for (Finger a : node.getCluster()) {
+            out += a.getIp() + ":" + a.getPort() + ", ";
         }
-        out+="\b\b }\n";
+        out += "\b\b }\n";
         System.out.println(out);
+
+        System.out.println("CLUSTER:::: "
+                + node.getCluster().toString());
     }
-    
+
 }
