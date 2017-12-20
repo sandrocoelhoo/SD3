@@ -720,7 +720,6 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
             if (fingerAux.getId() != node.getId()) {
                 try {
-
                     transport = new TSocket(fingerAux.getIp(), fingerAux.getPort());
                     transport.open();
                     protocol = new TBinaryProtocol(transport);
@@ -839,6 +838,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
             node.getPred().setId(n.getId());
             node.getPred().setIp(n.getIp());
             node.getPred().setPort(n.getPort());
+            node.getPred().setPortaRaft(n.getPortaRaft());
         }
     }
 
@@ -1039,7 +1039,8 @@ public class Handler extends StateMachine implements Thrift.Iface {
                     Thrift.Client client = new Thrift.Client(protocol);
                     client.setCluster(node.getCluster());
                     transport.close();
-
+                }else{
+                    break;
                 }
             }
         }
