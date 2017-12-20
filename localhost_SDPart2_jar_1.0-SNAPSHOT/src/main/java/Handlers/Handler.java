@@ -534,7 +534,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
         node.setPred(null);
 
         // Criação da FINGER TABLE e atribuição do mesmo nó para todos os campos
-        for (int i = 1; i < clusterS; i++) {
+        for (int i = 0; i < clusterS; i++) {
             Finger auxF = new Finger();
             auxF.setId(node.getId());
             auxF.setIp(node.getIp());
@@ -561,7 +561,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
         qual é os dados que ele possui de sucessor e predecessor e então atualiza seus 
         campos da ft.
          */
-        if (node.getId() != raiz.getId() && node.getPortaRaft() != raiz.getPortaRaft()) {
+        if (node.getId() == raiz.getId() && node.getPortaRaft() != raiz.getPortaRaft()) {
             Finger auxF = new Finger();
             auxF.setId(node.getId());
             auxF.setIp(node.getIp());
@@ -575,7 +575,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
             List<Finger> cluster = client.sendSelfCluster();
 
             for (int i = 1; i < clusterS; i++) {
-                if (cluster.get(i).equals(raiz.getIp()) && cluster.get(i).getPort() == raiz.getPort()) {
+                if (cluster.get(i).getIp().equals(raiz.getIp()) && cluster.get(i).getPort() == raiz.getPort()) {
                     Finger f = cluster.get(i);
                     f.setId(node.getId());
                     f.setIp(node.getIp());
@@ -589,7 +589,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
         }
 
 //Node nodeAux = client.getSucessor(node.getId());
-        if (node.getId() != raiz.getId() || (node.getPortaRaft() != node.getPortaRaftRaiz() && node.getIp().equals(node.getIdRaftRaiz()))) {
+        if (node.getId() != raiz.getId() || (node.getPortaRaft() != node.getPortaRaftRaiz() && node.getIp().equals(node.getIpRaftRaiz()))) {
             TTransport transport = new TSocket(raiz.getIp(), raiz.getPort());
             transport.open();
             TProtocol protocol = new TBinaryProtocol(transport);
