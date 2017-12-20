@@ -1,6 +1,11 @@
 package Handlers;
 
+import Command.AddArestaCommand;
 import Command.AddVerticeCommand;
+import Command.DeleteVerticeCommand;
+import Command.ReadVerticeCommand;
+import Command.ReadVerticeNodeCommand;
+import Command.UpdateVerticeCommand;
 import Grafo.Aresta;
 import Grafo.Chord;
 import Grafo.Finger;
@@ -10,6 +15,7 @@ import Grafo.Thrift;
 import Grafo.Vertice;
 import io.atomix.catalyst.transport.Address;
 import io.atomix.catalyst.transport.netty.NettyTransport;
+import io.atomix.copycat.Query;
 import io.atomix.copycat.client.CopycatClient;
 import io.atomix.copycat.server.Commit;
 import io.atomix.copycat.server.StateMachine;
@@ -128,7 +134,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 stabilize();
             } catch (TException ex) {
                 System.out.println("\n-> Erro ao iniciar Thread de estabilização do Chord.");
-                ex.printStackTrace();
+                //ex.printStackTrace();
             }
         }, 10, 10, TimeUnit.SECONDS);
 
@@ -137,7 +143,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 fixFingers();
             } catch (TException ex) {
                 System.out.println("\n-> Erro ao iniciar Thread para atualizar as Finger Tables");
-                ex.printStackTrace();
+                //ex.printStackTrace();
             }
         }, 10, 10, TimeUnit.SECONDS);
 
@@ -202,16 +208,12 @@ public class Handler extends StateMachine implements Thrift.Iface {
     @Override
     public Vertice readVertice(int nome) throws TException, KeyNotFound {
         // Verifica onde o nó poderá estar se ele existir
-        Node aux = getSucessor(nome % (int) Math.pow(2, numBits));
+        getNodeAux(nome);
 
         Vertice v = null;
 
         if (aux.getId() == node.getId()) {
-
-            v = HashVertice.computeIfPresent(nome, (a, b) -> {
-                return b;
-            });
-
+            return copyClient.submit(new ReadVerticeCommand(nome)).join();
         } else {
             TTransport transport = new TSocket(aux.getIp(), aux.getPort());
             transport.open();
@@ -229,25 +231,23 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
     }
 
+    public Vertice readVertice(Commit<ReadVerticeCommand> commit) {
+        try {
+            return HashVertice.computeIfPresent(commit.operation().nome, (a, b) -> {
+                return b;
+            });
+        } finally {
+            commit.close();
+        }
+    }
+
     @Override
     public boolean updateVertice(Vertice v) throws KeyNotFound, TException {
         // Verifica onde o nó poderá estar se ele existir
-        Node aux = getSucessor(v.getNome() % (int) Math.pow(2, numBits));
+        getNodeAux(v);
 
         if (aux.getId() == node.getId()) {
-            try {
-                Vertice vertice = readVertice(v.getNome());
-
-                synchronized (vertice) {
-                    vertice.setCor(v.getCor());
-                    vertice.setDescricao(v.getDescricao());
-                    vertice.setPeso(v.getPeso());
-                    return true;
-                }
-
-            } catch (KeyNotFound e) {
-                return false;
-            }
+            return copyClient.submit(new UpdateVerticeCommand(v)).join();
         } else {
             TTransport transport = new TSocket(aux.getIp(), aux.getPort());
             transport.open();
@@ -265,12 +265,27 @@ public class Handler extends StateMachine implements Thrift.Iface {
         }
     }
 
+    public boolean updateVertice(Commit<UpdateVerticeCommand> commit) throws TException {
+        try {
+            Vertice vertice = readVertice(commit.operation().vertice.getNome());
+
+            synchronized (vertice) {
+                vertice.setCor(commit.operation().vertice.getCor());
+                vertice.setDescricao(commit.operation().vertice.getDescricao());
+                vertice.setPeso(commit.operation().vertice.getPeso());
+                return true;
+            }
+        } finally {
+            commit.close();
+        }
+    }
+
     @Override
     public boolean deleteVertice(Vertice v) throws KeyNotFound, TException {
         List<Vertice> Vertices = new ArrayList<>();
         Aresta a;
 
-        Node aux = getSucessor(v.getNome() % (int) Math.pow(2, numBits));
+        getNodeAux(v);
 
         if (aux.getId() == node.getId()) {
 
@@ -315,20 +330,29 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
     @Override
     public List<Vertice> readVerticeNode() throws TException {
-        ArrayList<Vertice> Vertices = new ArrayList<>();
-
-        for (Integer key : HashVertice.keySet()) {
-            Vertices.add(this.readVertice(key));
-        }
+        ArrayList<Vertice> Vertices = (ArrayList<Vertice>) copyClient.submit(new ReadVerticeNodeCommand()).join();
 
         return Vertices;
     }
 
+    public List<Vertice> readVerticeNode(Commit<ReadVerticeNodeCommand> commit) throws TException {
+        try {
+            ArrayList<Vertice> Vertices = new ArrayList<>();
+
+            for (Integer key : HashVertice.keySet()) {
+                Vertices.add(this.readVertice(key));
+            }
+
+            return Vertices;
+        } finally {
+            commit.close();
+        }
+
+    }
+
     @Override
     public List<Vertice> readAllVertice() throws TException {
-        ArrayList<Vertice> Vertices = new ArrayList<>();
-
-        Vertices.addAll(readVerticeNode());
+        ArrayList<Vertice> Vertices = (ArrayList<Vertice>) copyClient.submit(new ReadVerticeNodeCommand()).join();
 
         Node aux = getSucessor(node.getId() + 1);
         TTransport transport = null;
@@ -363,15 +387,10 @@ public class Handler extends StateMachine implements Thrift.Iface {
         Vertice v;
         v = this.readVertice(a.getV1());
 
-        Node aux = getSucessor(v.getNome() % (int) Math.pow(2, numBits));
+        getNodeAux(v);
 
         if (aux.getId() == node.getId()) {
-
-            if (v.HashAresta.putIfAbsent(a.getV2(), a) == null) {
-                return true;
-            } else {
-                return false;
-            }
+            return copyClient.submit(new AddArestaCommand(a)).join();
         } else {
             TTransport transport = new TSocket(aux.getIp(), aux.getPort());
             transport.open();
@@ -385,6 +404,20 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 transport.close();
                 return false;
             }
+        }
+    }
+
+    public boolean addAResta(Commit<AddArestaCommand> commit) throws TException {
+        try {
+            Vertice v;
+            v = this.readVertice(commit.operation().a.getV1());
+            if (v.HashAresta.putIfAbsent(commit.operation().a.getV2(), commit.operation().a) == null) {
+                return true;
+            } else {
+                return false;
+            }
+        } finally {
+            commit.close();
         }
     }
 
@@ -758,23 +791,23 @@ public class Handler extends StateMachine implements Thrift.Iface {
         client = new Chord.Client(protocol);
         List<Finger> newCluster = client.sendSelfCluster();
         transport.close();
-        
+
         for (int i = 0; i < clusterS; i++) {
-            if(!(node.getFt().get(0).get(i).getIp().equals(newCluster.get(i).getIp())) || (node.getFt().get(0).get(i).getPort() != newCluster.get(i).getPort() && 
-                    node.getFt().get(0).get(i).getIp().equals(newCluster.get(i).getIp()))  ){
+            if (!(node.getFt().get(0).get(i).getIp().equals(newCluster.get(i).getIp())) || (node.getFt().get(0).get(i).getPort() != newCluster.get(i).getPort()
+                    && node.getFt().get(0).get(i).getIp().equals(newCluster.get(i).getIp()))) {
                 node.getFt().get(0).set(i, newCluster.get(i));
             }
         }
-        
-        if(node.getFt().get(0).get(0).getId() == node.getId()){
-            for(int i = 0; i < clusterS; i++){
+
+        if (node.getFt().get(0).get(0).getId() == node.getId()) {
+            for (int i = 0; i < clusterS; i++) {
                 node.getFt().get(0).set(i, node.getCluster().get(i));
             }
         }
-        
-        if(node.getFt().get(0).get(0).getId() != node.getId()){
-            for(int i = 0; i < clusterS;i++){
-                transport = new TSocket(node.getFt().get(0).get(i).getIp(),node.getFt().get(0).get(i).getPort());
+
+        if (node.getFt().get(0).get(0).getId() != node.getId()) {
+            for (int i = 0; i < clusterS; i++) {
+                transport = new TSocket(node.getFt().get(0).get(i).getIp(), node.getFt().get(0).get(i).getPort());
                 transport.open();
                 protocol = new TBinaryProtocol(transport);
                 client = new Chord.Client(protocol);
@@ -813,11 +846,11 @@ public class Handler extends StateMachine implements Thrift.Iface {
         //printTable();
         for (int i = 1; i < numBits; i++) {
             Node aux = getSucessor((node.getId() + (int) Math.pow(2, i)) % (int) Math.pow(2, numBits));
-            
+
             List<Finger> cluster = new ArrayList<>();
             cluster.addAll(aux.getCluster());
-            
-            for(int j = 0; j < clusterS; j++){
+
+            for (int j = 0; j < clusterS; j++) {
                 node.getFt().get(i).set(j, cluster.get(j));
             }
         }
@@ -892,7 +925,6 @@ public class Handler extends StateMachine implements Thrift.Iface {
         for (int i = 0; i < numBits; i++) {
 
             //Finger aux = node.getFt().get(i);
-
             System.out.println("(" + i + ") |" + (node.getId() + (int) Math.pow(2, i)) % (int) Math.pow(2, numBits)
                     + "| -------> ID:" + aux.getId()
                     + " IP:" + aux.getIp()
@@ -1014,6 +1046,10 @@ public class Handler extends StateMachine implements Thrift.Iface {
         aux = getSucessor(v.getNome() % (int) Math.pow(2, numBits)); // Pega o sucessor do nó local
     }
 
+    public void getNodeAux(int nome) throws TException {
+        aux = getSucessor(nome % (int) Math.pow(2, numBits)); // Pega o sucessor do nó local        
+    }
+
     @Override
     public int getIDLocal() throws TException {
         return node.getId();
@@ -1039,7 +1075,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
                     Thrift.Client client = new Thrift.Client(protocol);
                     client.setCluster(node.getCluster());
                     transport.close();
-                }else{
+                } else {
                     break;
                 }
             }
@@ -1048,32 +1084,23 @@ public class Handler extends StateMachine implements Thrift.Iface {
 
     public void printServer() {
 
-        String out = "";
-        out += "------Server Status------\n";
-        out += "ID:" + node.getId() + "\n";
+        String sout = "";
+        sout += "------Server Status------\n";
+        sout += "ID:" + node.getId() + "\n";
 
         if (node.getPred() != null) {
-            out += "Predecessor: " + node.getPred().getId() + "\n";
+            sout += "Predecessor: " + node.getPred().getId() + "\n";
         } else {
-            out += "Predecessor: NULL\n";
+            sout += "Predecessor: NULL\n";
         }
 
         for (int i = 0; i < numBits; i++) {
             List<Finger> auxList = node.getFt().get(i);
-            out += "Finger (" + i + ") |" + (node.getId() + (long) Math.pow(2, i)) % (long) Math.pow(2, numBits) + "| -> " + auxList.get(0).getId() + " @ { ";
-            for (Finger f : auxList) {
-                out += f.getIp() + ":" + f.getPort() + ", ";
-            }
-            out += "\b\b }\n";
+            sout += "Finger (" + i + ") |" + (node.getId() + (long) Math.pow(2, i)) % (long) Math.pow(2, numBits) + "| -> " + auxList.get(0).getId() + "\n";
+            sout += "\b\b";
         }
 
-        out += "Cluster{ ";
-
-        for (Finger a : node.getCluster()) {
-            out += a.getIp() + ":" + a.getPort() + ", ";
-        }
-        out += "\b\b }\n";
-        System.out.println(out);
+        System.out.println(sout);
 
         System.out.println("CLUSTER:::: "
                 + node.getCluster().toString());
