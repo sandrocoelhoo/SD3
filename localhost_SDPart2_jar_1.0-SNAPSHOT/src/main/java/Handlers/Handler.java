@@ -573,6 +573,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
             auxF.setIp(node.getIp());
             auxF.setPort(node.getPort());
             auxF.setPortaRaft(node.getPortaRaft());
+            auxF.setPortaRaftRaiz(node.getPortaRaftRaiz());
             node.getCluster().add(auxF);
         }
 
@@ -584,6 +585,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 auxF.setIp(node.getIp());
                 auxF.setPort(node.getPort());
                 auxF.setPortaRaft(node.getPortaRaft());
+                auxF.setPortaRaftRaiz(node.getPortaRaftRaiz());
                 node.getFt().get(i).add(auxF);
             }
         }
@@ -600,6 +602,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
             auxF.setIp(node.getIp());
             auxF.setPort(node.getPort());
             auxF.setPortaRaft(node.getPortaRaft());
+            auxF.setPortaRaftRaiz(node.getPortaRaftRaiz());
 
             TTransport transport = new TSocket(raiz.getIp(), raiz.getPort());
             transport.open();
@@ -614,6 +617,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
                     f.setIp(node.getIp());
                     f.setPort(node.getPort());
                     f.setPortaRaft(node.getPortaRaft());
+                    f.setPortaRaftRaiz(node.getPortaRaftRaiz());
                     node.setCluster(cluster);
                     transport.close();
                     break;
@@ -635,6 +639,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
                 node.getFt().get(0).get(i).setIp(nodeAux.getCluster().get(i).getIp());
                 node.getFt().get(0).get(i).setPort(nodeAux.getCluster().get(i).getPort());
                 node.getFt().get(0).get(i).setPortaRaft(nodeAux.getCluster().get(i).getPortaRaft());
+                node.getFt().get(0).get(i).setPortaRaftRaiz(nodeAux.getCluster().get(i).getPortaRaftRaiz());
             }
         }
     }
@@ -830,6 +835,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
             aux.setIp(n.getIp());
             aux.setPort(n.getPort());
             aux.setPortaRaft(n.getPortaRaft());
+            aux.setPortaRaftRaiz(n.getPortaRaftRaiz());
             node.setPred(aux);
             // System.out.println("\n-> O predecessor de:" + node.getId() + " agora é: " + n.getId());
         } else {
@@ -872,6 +878,7 @@ public class Handler extends StateMachine implements Thrift.Iface {
             node.getPred().setIp(n.getIp());
             node.getPred().setPort(n.getPort());
             node.getPred().setPortaRaft(n.getPortaRaft());
+            node.getPred().setPortaRaftRaiz(n.getPortaRaftRaiz());
         }
     }
 

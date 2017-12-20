@@ -24,7 +24,8 @@ struct Finger{
     1:i32 id,
     2:string ip,
     3:i32 port,
-	4:i32 portaRaft
+	4:i32 portaRaft,
+	5:i32 portaRaftRaiz
 }
 
 struct Node{
@@ -37,7 +38,7 @@ struct Node{
     7:i32 portaRaftRaiz,
     8:i32 portaRaft,
     9:list<Finger> cluster,
-	10:i32 idRaftRaiz
+	10:i32 idRaftRaiz,
 
 }
 
